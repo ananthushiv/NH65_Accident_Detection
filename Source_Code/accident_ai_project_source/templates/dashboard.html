@@ -1,0 +1,85 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NH65 Accident Detection Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial; background:#f4f6f8; padding:20px; }
+        .card { background:white; padding:15px; margin-bottom:15px; border-radius:6px; }
+        .alert { color:red; font-weight:bold; }
+    </style>
+</head>
+<body>
+<h2>🚦 NH65 Accident Detection (Vijayawada ↔ Hyderabad)</h2>
+
+<div class="card">
+    <h3>Traffic & Estimated Location</h3>
+    <div id="traffic">Loading...</div>
+    <div id="location"></div>
+</div>
+
+<div class="card">
+    <h3>Detected Alerts</h3>
+    <div id="alerts"></div>
+</div>
+
+<div class="card">
+    <h3>Delay Over Time</h3>
+    <canvas id="delayChart"></canvas>
+</div>
+
+<script>
+let chart;
+
+async function loadData() {
+    const res = await fetch('/detect');
+    const data = await res.json();
+
+    if (data.traffic && !data.traffic.error) {
+        document.getElementById('traffic').innerHTML =
+        `Route: Vijayawada → Hyderabad<br>
+         Distance: ${data.traffic.distance_km} km<br>
+         Delay: <span class='alert'>${data.traffic.delay_min} min</span>`;
+    }
+
+    if (data.location && !data.location.error) {
+        document.getElementById('location').innerHTML =
+        `📍 Estimated Location: ${data.location.lat}, ${data.location.lon}`;
+    }
+
+    let html = '';
+    data.alerts.forEach(a => {
+        html += `<div class='alert'>Delay: ${a.suspected_delay_sec} sec</div>`;
+    });
+    document.getElementById('alerts').innerHTML = html || 'No alerts';
+}
+
+async function loadChart() {
+    const res = await fetch('/history');
+    const data = await res.json();
+
+    const labels = data.map(d => new Date(d.time*1000).toLocaleTimeString());
+    const values = data.map(d => d.delay);
+
+    const ctx = document.getElementById('delayChart').getContext('2d');
+    if (chart) chart.destroy();
+
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Delay (sec)',
+                data: values,
+                borderWidth: 2
+            }]
+        }
+    });
+}
+
+setInterval(() => { loadData(); loadChart(); }, 5000);
+loadData(); loadChart();
+</script>
+</body>
+</html>
