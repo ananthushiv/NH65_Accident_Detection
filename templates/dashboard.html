@@ -104,6 +104,18 @@
     .route-info h4 {
         margin-top: 0;
     }
+    .alert-box {
+        padding: 12px;
+        margin: 10px 0;
+        border-radius: 8px;
+        color: #222;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        display: block;
+    }
+    .alert-severity-high { background: linear-gradient(90deg,#ffe6e6,#ffd1d1); border-left:4px solid #e74c3c; }
+    .alert-severity-medium { background: linear-gradient(90deg,#fff4e6,#fff0d1); border-left:4px solid #f39c12; }
+    .alert-severity-low { background: linear-gradient(90deg,#e8fff0,#dfffe6); border-left:4px solid #2ecc71; }
+    .alert-title { font-weight:700; margin-bottom:6px; }
     .info-row {
         display: flex;
         justify-content: space-between;
@@ -151,6 +163,11 @@
 <div class="peak-analysis">
     <h3>Peak Hours Analysis (24-hour)</h3>
     <div id="peakAnalysis"></div>
+</div>
+
+<div class="peak-analysis">
+    <h3>Live Alerts</h3>
+    <div id="alerts" style="min-height:40px;">Loading alerts...</div>
 </div>
 
 <div class="peak-analysis">
@@ -438,9 +455,78 @@ async function refreshData() {
         
         // Load Google Maps route traffic asynchronously (non-blocking)
         loadRouteTrafficAsync();
+        loadAlertsAsync();
         
     } catch (error) {
         console.error('Error fetching data:', error);
+    }
+}
+
+// Fetch and display alerts
+async function loadAlertsAsync() {
+    try {
+        const res = await fetch('/api/alerts');
+        if (!res.ok) throw new Error('Alerts fetch failed');
+        const data = await res.json();
+        const alerts = data.alerts || [];
+        const container = document.getElementById('alerts');
+        if (!container) return;
+        if (alerts.length === 0) {
+            container.innerHTML = '<div style="color:green">No active alerts</div>';
+            return;
+        }
+
+        const html = alerts.map(a => {
+            const timeStr = a.timestamp ? new Date(a.timestamp * 1000).toLocaleString() : '';
+            // Determine severity class
+            let sevClass = 'alert-severity-low';
+            if (a.type === 'accident') sevClass = 'alert-severity-high';
+            else if (a.type === 'congestion') sevClass = 'alert-severity-medium';
+            else if (a.type === 'delay') sevClass = 'alert-severity-medium';
+
+            if (a.type === 'accident') {
+                return `
+                    <div class="alert-box ${sevClass}">
+                        <div class="alert-title">⚠️ ${a.message}</div>
+                        <div>Location: ${a.toll || a.route || ''}</div>
+                        <div>Vehicles: ${a.vehicle_count || 'N/A'}</div>
+                        <div style="font-size:12px; color:#555; margin-top:6px;">${timeStr}</div>
+                    </div>`;
+            }
+
+            if (a.type === 'congestion') {
+                return `
+                    <div class="alert-box ${sevClass}">
+                        <div class="alert-title">🚦 ${a.message}</div>
+                        <div>Location: ${a.toll || a.route || ''}</div>
+                        <div>Vehicles: ${a.vehicle_count || 'N/A'}</div>
+                        <div style="font-size:12px; color:#555; margin-top:6px;">${timeStr}</div>
+                    </div>`;
+            }
+
+            if (a.type === 'delay') {
+                return `
+                    <div class="alert-box ${sevClass}">
+                        <div class="alert-title">⏱️ ${a.message}</div>
+                        <div>Delay: ${a.delay_min || 'N/A'} min</div>
+                        <div style="font-size:12px; color:#555; margin-top:6px;">${timeStr}</div>
+                    </div>`;
+            }
+
+            // Generic fallback
+            return `
+                <div class="alert-box ${sevClass}">
+                    <div class="alert-title">Info</div>
+                    <div>${(a.message) ? a.message : JSON.stringify(a)}</div>
+                    <div style="font-size:12px; color:#555; margin-top:6px;">${timeStr}</div>
+                </div>`;
+        }).join('');
+
+        container.innerHTML = html;
+    } catch (e) {
+        console.error('Error loading alerts', e);
+        const container = document.getElementById('alerts');
+        if (container) container.innerHTML = `<div style="color:#ff6b6b">Error loading alerts</div>`;
     }
 }
 
@@ -490,6 +576,12 @@ async function loadRouteTrafficAsync() {
                             console.error('Directions request failed:', status);
                         }
                     });
+                } else {
+                    // If Google Directions not available, draw decoded polyline on Leaflet
+                    if (route.polyline) {
+                        drawPolylineOnLeaflet(route.polyline);
+                        console.log('Polyline drawn on Leaflet fallback');
+                    }
                 }
             } else {
                 // Display route on map
@@ -506,6 +598,12 @@ async function loadRouteTrafficAsync() {
                             console.error('Directions error:', status);
                         }
                     });
+                } else {
+                    // If Google Directions not available, draw decoded polyline on Leaflet
+                    if (route.polyline) {
+                        drawPolylineOnLeaflet(route.polyline);
+                        console.log('Polyline drawn on Leaflet fallback (route)');
+                    }
                 }
                 
                 // Display route info
@@ -546,6 +644,52 @@ async function loadRouteTrafficAsync() {
         if (mapLoader) mapLoader.style.display = 'none';
         if (mapLoadingText) mapLoadingText.innerHTML = `Error loading map: ${routeError.message}`;
         document.getElementById('routeInfo').innerHTML = '<p style="color: #ff6b6b;">Error loading route information</p>';
+    }
+}
+
+// Decode Google encoded polyline to array of [lat, lng]
+function decodePolyline(encoded) {
+    if (!encoded) return [];
+    let points = [];
+    let index = 0, len = encoded.length;
+    let lat = 0, lng = 0;
+
+    while (index < len) {
+        let b, shift = 0, result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lat += dlat;
+
+        shift = 0;
+        result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lng += dlng;
+
+        points.push([lat / 1e5, lng / 1e5]);
+    }
+    return points;
+}
+
+// Draw decoded polyline on Leaflet map if available
+function drawPolylineOnLeaflet(encodedPolyline) {
+    try {
+        if (typeof L === 'undefined' || !map) return;
+        const latlngs = decodePolyline(encodedPolyline);
+        if (!latlngs || latlngs.length === 0) return;
+        // Convert to Leaflet LatLng objects
+        const leafletPoints = latlngs.map(p => [p[0], p[1]]);
+        L.polyline(leafletPoints, { color: '#FF0000', weight: 3, opacity: 0.7 }).addTo(map);
+    } catch (e) {
+        console.error('Error drawing polyline on Leaflet:', e);
     }
 }
 

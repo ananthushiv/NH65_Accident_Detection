@@ -49,7 +49,8 @@ def get_traffic_status(toll_id):
 
 def get_all_toll_traffic():
     """Get traffic status for all toll plazas"""
-    toll_stations = ["VJA_TOLL", "HYD_TOLL", "SEC_TOLL", "NH65_TOLL", "NH16_TOLL"]
+    # Ensure PANTHANGI_TOLL is included so the dashboard shows it
+    toll_stations = ["VJA_TOLL", "PANTHANGI_TOLL", "HYD_TOLL", "SEC_TOLL", "NH65_TOLL", "NH16_TOLL"]
     traffic_data = []
     
     for toll in toll_stations:
